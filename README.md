@@ -21,6 +21,7 @@ After fine-tuning, the model can interpret user requests and generate appropriat
 ### System Requirements
 - **GPU**: NVIDIA GPU with CUDA support (recommended for faster training)
   - Tested on A100 GPUs; works on V100, RTX series as well
+  - Tested on 3060 GPU - around 8 minutes per epoch
   - CPU training possible but significantly slower
 - **Python**: 3.10+
 - **CUDA**: 12.0+ (if using GPU)
@@ -50,7 +51,7 @@ source venv_train/bin/activate  # On Windows: venv_train\Scripts\activate
 ### 3. Install Dependencies
 
 ```bash
-pip install torch transformers==4.57.1 trl==0.25.1 datasets==4.4.1 matplotlib pandas
+pip install -r requirements.txt
 ```
 
 ### 4. Configure Hugging Face Token
@@ -65,7 +66,8 @@ export HF_TOKEN="your_token_here"
 ```
 functiongemma/
 ├── README.md                 # This file
-├── tra.py                    # Main training script
+├── train.py                  # Main training script
+├── convert.py                # Convert model to mobile format
 ├── token.txt                 # Your HF_TOKEN (add to .gitignore)
 ├── venv_train/              # Virtual environment
 └── outputs/                 # (Created after training)
@@ -79,7 +81,7 @@ functiongemma/
 ### Run the Training Script
 
 ```bash
-python tra.py
+python train.py
 ```
 
 The script performs the following steps:
@@ -99,7 +101,7 @@ The script performs the following steps:
 
 ### Training Configuration
 
-Key hyperparameters in `tra.py`:
+Key hyperparameters in `train.py`:
 
 ```python
 args = SFTConfig(
