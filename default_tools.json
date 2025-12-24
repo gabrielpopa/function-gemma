@@ -1,0 +1,81 @@
+[
+    {
+        "function": {
+            "name": "turn_on_flashlight",
+            "description": "Turns the flashlight on.",
+            "parameters": {"type": "OBJECT", "properties": {}}
+        }
+    },
+    {
+        "function": {
+            "name": "turn_off_flashlight",
+            "description": "Turns the flashlight off.",
+            "parameters": {"type": "OBJECT", "properties": {}}
+        }
+    },
+    {
+        "function": {
+            "name": "create_contact",
+            "description": "Creates a contact in the phone's contact list.",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "first_name": {"type": "STRING", "description": "The first name"},
+                    "last_name": {"type": "STRING", "description": "The last name"},
+                    "phone_number": {"type": "STRING", "description": "Phone number"},
+                    "email": {"type": "STRING", "description": "Email address"}
+                },
+                "required": ["first_name", "last_name"]
+            }
+        }
+    },
+    {
+        "function": {
+            "name": "send_email",
+            "description": "Sends an email.",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "to": {"type": "STRING", "description": "Recipient email"},
+                    "subject": {"type": "STRING", "description": "Email subject"},
+                    "body": {"type": "STRING", "description": "Email body"}
+                },
+                "required": ["to", "subject"]
+            }
+        }
+    },
+    {
+        "function": {
+            "name": "create_calendar_event",
+            "description": "Creates a new calendar event.",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "title": {"type": "STRING", "description": "Event title"},
+                    "datetime": {"type": "STRING", "description": "Date/time in YYYY-MM-DDTHH:MM:SS"}
+                },
+                "required": ["title", "datetime"]
+            }
+        }
+    },
+    {
+        "function": {
+            "name": "show_map",
+            "description": "Shows a location on the map.",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "query": {"type": "STRING", "description": "Location to search"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "function": {
+            "name": "open_wifi_settings",
+            "description": "Opens the Wi-Fi settings.",
+            "parameters": {"type": "OBJECT", "properties": {}}
+        }
+    }
+]

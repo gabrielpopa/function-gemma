@@ -42,6 +42,10 @@ class ScriptArgs:
     skip_login: bool
     local_files_only: bool
     run_smoke_tests: bool
+    dataset_path: Optional[List[str]]
+    dataset_repo_id: str
+    dataset_filename: str
+    download_example_dataset: Optional[str]
 
 
 @dataclass
@@ -101,6 +105,19 @@ def _parse_args() -> ScriptArgs:
         help="Disable network access; use only local Hugging Face cache.",
     )
     parser.add_argument(
+        "--dataset_path",
+        nargs="+",
+        default=None,
+        help="Path(s) to your dataset JSONL files. Overrides --dataset_repo_id/--dataset_filename.",
+    )
+    parser.add_argument("--dataset_repo_id", default="google/mobile-actions")
+    parser.add_argument("--dataset_filename", default="dataset.jsonl")
+    parser.add_argument(
+        "--download_example_dataset",
+        default=None,
+        help="If set, downloads the example dataset to this path and exits.",
+    )
+    parser.add_argument(
         "--run_smoke_tests",
         action="store_true",
         help="Runs a small generation before/after training (slow; requires GPU for practicality).",
@@ -122,12 +139,30 @@ def _maybe_login(skip_login: bool) -> None:
     login(token=hf_token)
 
 
-def _load_mobile_actions_jsonl(local_files_only: bool) -> Dataset:
+def _download_example_dataset(
+    output_path: str, repo_id: str, filename: str, local_files_only: bool
+) -> str:
     data_file = hf_hub_download(
-        repo_id="google/mobile-actions",
-        filename="dataset.jsonl",
+        repo_id=repo_id,
+        filename=filename,
         repo_type="dataset",
         local_files_only=local_files_only,
+    )
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    shutil.copyfile(data_file, output_path)
+    return output_path
+
+
+def _load_dataset(args: ScriptArgs) -> Dataset:
+    if args.dataset_path:
+        data_files = args.dataset_path
+        return load_dataset("json", data_files=data_files, split="train")
+
+    data_file = hf_hub_download(
+        repo_id=args.dataset_repo_id,
+        filename=args.dataset_filename,
+        repo_type="dataset",
+        local_files_only=args.local_files_only,
     )
     return load_dataset("json", data_files=data_file, split="train")
 
@@ -205,6 +240,16 @@ def main() -> None:
 
     torch.cuda.empty_cache()
 
+    if args.download_example_dataset:
+        downloaded_path = _download_example_dataset(
+            output_path=args.download_example_dataset,
+            repo_id=args.dataset_repo_id,
+            filename=args.dataset_filename,
+            local_files_only=args.local_files_only,
+        )
+        print("Downloaded dataset to:", downloaded_path)
+        return
+
     try:
         tokenizer = AutoTokenizer.from_pretrained(args.model_id, use_fast=False, local_files_only=args.local_files_only)
     except Exception as e:
@@ -216,7 +261,7 @@ def main() -> None:
         tokenizer = AutoTokenizer.from_pretrained(args.model_id, use_fast=True, local_files_only=args.local_files_only)
     tokenizer.padding_side = "right"
 
-    raw_dataset = _load_mobile_actions_jsonl(local_files_only=args.local_files_only).shuffle(seed=args.seed)
+    raw_dataset = _load_dataset(args).shuffle(seed=args.seed)
     print(
         "\nHere's an example from the dataset:\n",
         json.dumps(raw_dataset[randint(0, len(raw_dataset) - 1)], indent=2),

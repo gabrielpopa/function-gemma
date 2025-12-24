@@ -1,0 +1,2 @@
+Current date and time: 2025-12-23T10:00:00
+You are a model that can do function calling.

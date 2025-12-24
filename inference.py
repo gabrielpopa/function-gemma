@@ -8,6 +8,7 @@ import argparse
 import os
 import json
 import torch
+from typing import Any, Dict, List
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoProcessor, set_seed
 
 
@@ -19,6 +20,9 @@ def _parse_args():
     parser.add_argument("--max_new_tokens", type=int, default=256)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--tools_path", default="default_tools.json")
+    parser.add_argument("--system_prompt_path", default="default_system_prompt.txt")
+    parser.add_argument("--query", default=None, help="Single user query to test.")
     return parser.parse_args()
 
 
@@ -60,98 +64,23 @@ def load_model(model_path: str, device: str, dtype: torch.dtype):
     return model, tokenizer, processor
 
 
-def create_prompt(user_request, tools=None):
+def _load_tools(path: str) -> List[Dict[str, Any]]:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _load_system_prompt(path: str) -> str:
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read().strip()
+
+
+def create_prompt(user_request: str, tools: List[Dict[str, Any]], system_prompt: str):
     """Create a properly formatted prompt for the model."""
-    
-    # Default mobile action tools
-    if tools is None:
-        tools = [
-            {
-                "function": {
-                    "name": "turn_on_flashlight",
-                    "description": "Turns the flashlight on.",
-                    "parameters": {"type": "OBJECT", "properties": {}}
-                }
-            },
-            {
-                "function": {
-                    "name": "turn_off_flashlight",
-                    "description": "Turns the flashlight off.",
-                    "parameters": {"type": "OBJECT", "properties": {}}
-                }
-            },
-            {
-                "function": {
-                    "name": "create_contact",
-                    "description": "Creates a contact in the phone's contact list.",
-                    "parameters": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "first_name": {"type": "STRING", "description": "The first name"},
-                            "last_name": {"type": "STRING", "description": "The last name"},
-                            "phone_number": {"type": "STRING", "description": "Phone number"},
-                            "email": {"type": "STRING", "description": "Email address"}
-                        },
-                        "required": ["first_name", "last_name"]
-                    }
-                }
-            },
-            {
-                "function": {
-                    "name": "send_email",
-                    "description": "Sends an email.",
-                    "parameters": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "to": {"type": "STRING", "description": "Recipient email"},
-                            "subject": {"type": "STRING", "description": "Email subject"},
-                            "body": {"type": "STRING", "description": "Email body"}
-                        },
-                        "required": ["to", "subject"]
-                    }
-                }
-            },
-            {
-                "function": {
-                    "name": "create_calendar_event",
-                    "description": "Creates a new calendar event.",
-                    "parameters": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "title": {"type": "STRING", "description": "Event title"},
-                            "datetime": {"type": "STRING", "description": "Date/time in YYYY-MM-DDTHH:MM:SS"}
-                        },
-                        "required": ["title", "datetime"]
-                    }
-                }
-            },
-            {
-                "function": {
-                    "name": "show_map",
-                    "description": "Shows a location on the map.",
-                    "parameters": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "query": {"type": "STRING", "description": "Location to search"}
-                        },
-                        "required": ["query"]
-                    }
-                }
-            },
-            {
-                "function": {
-                    "name": "open_wifi_settings",
-                    "description": "Opens the Wi-Fi settings.",
-                    "parameters": {"type": "OBJECT", "properties": {}}
-                }
-            }
-        ]
-    
     return {
         "messages": [
             {
                 "role": "developer",
-                "content": "Current date and time: 2025-12-23T10:00:00\nYou are a model that can do function calling."
+                "content": system_prompt
             },
             {
                 "role": "user",
@@ -162,7 +91,7 @@ def create_prompt(user_request, tools=None):
     }
 
 
-def test_model(model, tokenizer, processor, user_request, max_new_tokens, temperature):
+def test_model(model, tokenizer, processor, user_request, tools, system_prompt, max_new_tokens, temperature):
     """Test the model with a user request."""
     
     print(f"\n{'='*60}")
@@ -170,7 +99,7 @@ def test_model(model, tokenizer, processor, user_request, max_new_tokens, temper
     print(f"{'='*60}")
     
     # Create prompt
-    prompt_data = create_prompt(user_request)
+    prompt_data = create_prompt(user_request, tools=tools, system_prompt=system_prompt)
     
     # Apply chat template
     prompt_text = processor.apply_chat_template(
@@ -241,16 +170,21 @@ def main():
         return False
     
     model, tokenizer, processor = load_model(model_path, device=device, dtype=dtype)
+    tools = _load_tools(args.tools_path)
+    system_prompt = _load_system_prompt(args.system_prompt_path)
     
     # Test cases
-    test_requests = [
-        "Turn on the flashlight",
-        "Create a contact named John Smith with phone 555-1234",
-        "Send an email to john@example.com with subject 'Meeting' and message 'See you tomorrow'",
-        "Schedule a meeting called 'Q4 Review' for tomorrow at 2pm",
-        "Show me the nearest coffee shop",
-        "Open WiFi settings"
-    ]
+    if args.query:
+        test_requests = [args.query]
+    else:
+        test_requests = [
+            "Turn on the flashlight",
+            "Create a contact named John Smith with phone 555-1234",
+            "Send an email to john@example.com with subject 'Meeting' and message 'See you tomorrow'",
+            "Schedule a meeting called 'Q4 Review' for tomorrow at 2pm",
+            "Show me the nearest coffee shop",
+            "Open WiFi settings"
+        ]
     
     print(f"\nRunning {len(test_requests)} inference tests...\n")
     
@@ -262,6 +196,8 @@ def main():
             tokenizer,
             processor,
             request,
+            tools,
+            system_prompt,
             max_new_tokens=args.max_new_tokens,
             temperature=args.temperature,
         )
