@@ -61,6 +61,12 @@ export HF_TOKEN="your_token_here"
 # Or store in token.txt and load in your script
 ```
 
+or from a file.
+
+```bash
+source venv_train/bin/activate && export HF_TOKEN=$(cat token.txt | tr -d '\n' | xargs)
+```
+
 ## Project Structure
 
 ```
@@ -81,7 +87,7 @@ functiongemma/
 ### Run the Training Script
 
 ```bash
-python train.py
+python train.py --max_length 1024 --per_device_train_batch_size 1  --per_device_eval_batch_size 1  --gradient_accumulation_steps 16 --bf16
 ```
 
 The script performs the following steps:
@@ -98,6 +104,14 @@ The script performs the following steps:
    - Gradient checkpointing for memory efficiency
 6. **Evaluation**: Tests trained vs. base model on evaluation set
 7. **Model Saving**: Saves fine-tuned weights and tokenizer to Hugging Face Hub
+
+### Convert to LiteRT-LM
+
+`convert.py` expects a SentencePiece model file at `functiongemma-270m-it-mobile-actions-sft/tokenizer.model`. The updated `train.py` exports it automatically (or copies it from the base model if you’re using the fast tokenizer).
+
+```bash
+python convert.py --checkpoint_dir functiongemma-270m-it-mobile-actions-sft --output_dir output
+```
 
 ### Training Configuration
 
