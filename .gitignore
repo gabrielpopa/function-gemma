@@ -1,6 +1,8 @@
 output/
 venv*/
 token.txt
+inference_results.json
+functiongemma-270m-it-mobile-actions-sft
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

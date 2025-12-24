@@ -85,19 +85,45 @@ export_config.kvcache_layout = kv_cache.KV_LAYOUT_TRANSPOSED
 export_config.mask_as_input = True
 
 # Convert to LiteRT-LM Format
-converter.convert_to_litert(
-    pytorch_model,
-    output_path=litertlm_output_dir,
-    output_name_prefix="mobile-actions",
-    prefill_seq_len=256,
-    kv_cache_max_len=1024,
-    quantize="dynamic_int8",
-    export_config=export_config,
-    tokenizer_model_path=tokenizer_model_path,
-    base_llm_metadata_path=metadata_path,
-    output_format="litertlm",
-    model_prompt_prefix="<start_of_turn>model\n",
-    model_prompt_suffix="<end_of_turn>\n",
-    user_prompt_prefix="<start_of_turn>user\n",
-    user_prompt_suffix="<end_of_turn>\n",
-)
+try:
+    converter.convert_to_litert(
+        pytorch_model,
+        output_path=litertlm_output_dir,
+        output_name_prefix="mobile-actions",
+        prefill_seq_len=256,
+        kv_cache_max_len=1024,
+        quantize="dynamic_int8",
+        export_config=export_config,
+        tokenizer_model_path=tokenizer_model_path,
+        base_llm_metadata_path=metadata_path,
+        output_format="litertlm",
+        model_prompt_prefix="<start_of_turn>model\n",
+        model_prompt_suffix="<end_of_turn>\n",
+        user_prompt_prefix="<start_of_turn>user\n",
+        user_prompt_suffix="<end_of_turn>\n",
+    )
+except RuntimeError as exc:
+    if requested_device == "cpu":
+        raise
+    print(
+        "GPU export failed (likely torch.export fake tensor device mismatch). "
+        "Falling back to CPU export with float32.\n"
+        f"Reason: {exc}"
+    )
+    pytorch_model = pytorch_model.to(device="cpu", dtype=torch.float32)
+    converter.convert_to_litert(
+        pytorch_model,
+        output_path=litertlm_output_dir,
+        output_name_prefix="mobile-actions",
+        prefill_seq_len=256,
+        kv_cache_max_len=1024,
+        quantize="dynamic_int8",
+        export_config=export_config,
+        tokenizer_model_path=tokenizer_model_path,
+        base_llm_metadata_path=metadata_path,
+        output_format="litertlm",
+        model_prompt_prefix="<start_of_turn>model\n",
+        model_prompt_suffix="<end_of_turn>\n",
+        user_prompt_prefix="<start_of_turn>user\n",
+        user_prompt_suffix="<end_of_turn>\n",
+    )
