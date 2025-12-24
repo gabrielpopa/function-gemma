@@ -1,5 +1,6 @@
 import os
 import argparse
+import torch
 from ai_edge_torch.generative.examples.gemma3 import gemma3
 from ai_edge_torch.generative.utilities import converter
 from ai_edge_torch.generative.utilities.export_config import ExportConfig
@@ -26,6 +27,17 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Convert a fine-tuned FunctionGemma checkpoint to LiteRT-LM format.")
     parser.add_argument("--checkpoint_dir", default="functiongemma-270m-it-mobile-actions-sft")
     parser.add_argument("--output_dir", default="output")
+    parser.add_argument(
+        "--device",
+        default="cpu",
+        help="Device for the PyTorch export step (cpu, cuda, or cuda:0). Defaults to cpu.",
+    )
+    parser.add_argument(
+        "--dtype",
+        default="float32",
+        choices=["float32", "float16", "bfloat16"],
+        help="Dtype to cast the PyTorch model before export. Defaults to float32.",
+    )
     return parser.parse_args()
 
 
@@ -50,6 +62,22 @@ with open(metadata_path, 'w') as f:
 
 # Import the weights and build the PyTorch model
 pytorch_model = gemma3.build_model_270m(checkpoint_dir)
+
+requested_device = args.device
+if requested_device != "cpu":
+    if not torch.cuda.is_available():
+        raise RuntimeError("Requested a CUDA device, but torch.cuda.is_available() is False.")
+
+dtype_map = {
+    "float32": torch.float32,
+    "float16": torch.float16,
+    "bfloat16": torch.bfloat16,
+}
+model_dtype = dtype_map[args.dtype]
+if requested_device == "cpu" and model_dtype != torch.float32:
+    raise RuntimeError("CPU export only supports float32. Use --dtype float32 or set --device cuda.")
+pytorch_model = pytorch_model.to(device=requested_device, dtype=model_dtype)
+pytorch_model.eval()
 
 # Setup the export configurations and parameters for text generation models.
 export_config = ExportConfig()
