@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import sys
+import textwrap
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -398,6 +399,15 @@ def _extract_user_prompt(record: Dict[str, Any]) -> str:
     return ""
 
 
+def _extract_roles(record: Dict[str, Any]) -> str:
+    roles = []
+    for msg in record.get("messages", []):
+        role = msg.get("role")
+        if role and role not in roles:
+            roles.append(role)
+    return ", ".join(roles)
+
+
 def _extract_arguments(record: Dict[str, Any]) -> Dict[str, Any]:
     for msg in record.get("messages", []):
         if msg.get("role") == "assistant" and msg.get("tool_calls"):
@@ -424,26 +434,48 @@ def _show_dataset_for_tool(
         if _extract_tool_name(record) != tool_name:
             continue
         user_prompt = _extract_user_prompt(record)
+        roles = _extract_roles(record)
         arguments = _extract_arguments(record)
-        rows.append([metadata, user_prompt, json.dumps(arguments, ensure_ascii=False)])
+        rows.append(
+            [metadata, roles, user_prompt, json.dumps(arguments, ensure_ascii=False)]
+        )
 
     if not rows:
         print("No matching entries.")
         return tool_name, split
 
-    headers = ["Split", "User Prompt", "Arguments"]
-    col_widths = [len(h) for h in headers]
-    for row in rows:
-        for i, cell in enumerate(row):
-            col_widths[i] = max(col_widths[i], len(str(cell)))
+    headers = ["Split", "Roles", "User Prompt", "Arguments"]
+    max_widths = [8, 18, 60, 60]
 
-    def _fmt_row(values: List[str]) -> str:
-        return " | ".join(str(values[i]).ljust(col_widths[i]) for i in range(len(values)))
+    def _wrap_cell(text: str, width: int) -> List[str]:
+        if not text:
+            return [""]
+        return textwrap.wrap(text, width=width, break_long_words=True, break_on_hyphens=False) or [""]
 
-    print(_fmt_row(headers))
-    print("-+-".join("-" * w for w in col_widths))
-    for row in rows:
-        print(_fmt_row(row))
+    def _print_table(rows_in: List[List[str]]) -> None:
+        col_widths = [min(len(h), max_widths[i]) for i, h in enumerate(headers)]
+        for row in rows_in:
+            for i, cell in enumerate(row):
+                col_widths[i] = max(col_widths[i], min(len(str(cell)), max_widths[i]))
+
+        def _fmt_line(values: List[str]) -> str:
+            return " | ".join(str(values[i]).ljust(col_widths[i]) for i in range(len(values)))
+
+        print(_fmt_line(headers))
+        print("-+-".join("-" * w for w in col_widths))
+        for row in rows_in:
+            wrapped_cells = [
+                _wrap_cell(str(row[i]), col_widths[i]) for i in range(len(row))
+            ]
+            max_lines = max(len(cell_lines) for cell_lines in wrapped_cells)
+            for line_idx in range(max_lines):
+                line_values = [
+                    (cell_lines[line_idx] if line_idx < len(cell_lines) else "")
+                    for cell_lines in wrapped_cells
+                ]
+                print(_fmt_line(line_values))
+
+    _print_table(rows)
     return tool_name, split
 
 
