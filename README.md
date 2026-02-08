@@ -105,6 +105,34 @@ The script performs the following steps:
 6. **Evaluation**: Tests trained vs. base model on evaluation set
 7. **Model Saving**: Saves fine-tuned weights and tokenizer to Hugging Face Hub
 
+### Dataset Format (JSON/JSONL)
+
+The training script loads datasets via `load_dataset("json", ...)`, so both `.json` and `.jsonl` are supported. The default dataset filename is `dataset.jsonl`. Each record should include:
+
+```json
+{
+  "messages": [...],
+  "tools": [...],
+  "metadata": "train"
+}
+```
+
+### Build or Extend Tool Definitions
+
+Use the interactive tool builder to create or append to a tool definition file (JSON or JSONL). This is helpful when you want to add new function schemas before creating or updating datasets.
+
+```bash
+python tools_builder.py
+```
+
+### Build Dataset Examples
+
+To add prompt + tool-call examples and save them as a dataset file, use the interactive dataset builder. It loads your tools file and writes records with `messages`, `tools`, and `metadata`.
+
+```bash
+python dataset_builder.py
+```
+
 ### Convert to LiteRT-LM
 
 `convert.py` expects a SentencePiece model file at `functiongemma-270m-it-mobile-actions-sft/tokenizer.model`. The updated `train.py` exports it automatically (or copies it from the base model if you’re using the fast tokenizer).
