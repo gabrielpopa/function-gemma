@@ -313,6 +313,7 @@ def _call_dataset_builder(
     tool_name: str,
     prompt: str,
     arguments: Dict[str, Any],
+    metadata: str,
 ) -> None:
     cmd = [
         sys.executable,
@@ -323,6 +324,8 @@ def _call_dataset_builder(
         tool_name,
         "--prompt",
         prompt,
+        "--metadata",
+        metadata,
         "--arg-json",
         json.dumps(arguments, ensure_ascii=False),
     ]
@@ -340,6 +343,11 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument("--tool", required=True, help="Tool name to generate entries for.")
     parser.add_argument(
         "--max-entries", type=int, default=10, help="Number of entries to generate (default: 10)."
+    )
+    parser.add_argument(
+        "--metadata",
+        default="train",
+        help="Metadata label for inserted records (default: train).",
     )
     parser.add_argument(
         "--explanation",
@@ -478,7 +486,8 @@ def main() -> None:
             color_msg = "\033[1;32m"  # bright green
             color_args = "\033[1;36m"  # bright cyan
             reset = "\033[0m"
-            print(f"User message:")
+            print(f"{color_msg}Metadata:{reset} {args.metadata}")
+            print("User message:")
             print(f"{color_msg}{user_message.strip()}{reset}")
             print(f"Arguments:")
             print(f"{color_args}{json.dumps(arguments, ensure_ascii=False)}{reset}")
@@ -487,7 +496,9 @@ def main() -> None:
                 continue
 
         try:
-            _call_dataset_builder(args.dataset, args.tool, user_message.strip(), arguments)
+            _call_dataset_builder(
+                args.dataset, args.tool, user_message.strip(), arguments, args.metadata
+            )
         except RuntimeError as exc:
             print(f"[{idx + 1}] dataset_builder error: {exc}")
             continue
