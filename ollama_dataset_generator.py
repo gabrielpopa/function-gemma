@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import random
 import subprocess
 import sys
 from typing import Any, Dict, List, Optional, Tuple
@@ -226,17 +227,17 @@ def _recent_examples(
     records: List[Dict[str, Any]], tool_name: str, max_examples: int = 10
 ) -> List[str]:
     examples: List[str] = []
-    for record in reversed(records):
+    for record in records:
         if _record_tool_name(record) != tool_name:
             continue
         user_msg = _clean_user_message(_record_user_message(record))
-        if user_msg:
-            if _looks_like_bad_example(user_msg):
-                continue
+        if user_msg and not _looks_like_bad_example(user_msg):
             examples.append(user_msg)
-        if len(examples) >= max_examples:
-            break
-    return examples
+    if not examples:
+        return []
+    if len(examples) <= max_examples:
+        return examples
+    return random.sample(examples, k=max_examples)
 
 
 def _required_args(tool: Dict[str, Any]) -> List[str]:
@@ -324,6 +325,11 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
         help="Ask before inserting each generated entry.",
     )
     parser.add_argument(
+        "--auto-insert",
+        action="store_true",
+        help="Insert entries without asking for confirmation (overrides --confirm).",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Print the Ollama prompt and raw responses for debugging.",
@@ -337,6 +343,8 @@ def main() -> None:
     if args.max_entries <= 0:
         print("max-entries must be > 0")
         sys.exit(1)
+    if args.auto_insert:
+        args.confirm = False
 
     dataset_records = _load_json_or_jsonl(args.dataset)
     if args.tools:
@@ -421,10 +429,13 @@ def main() -> None:
             continue
 
         if args.confirm:
-            print("User message:")
-            print(user_message.strip())
-            print("Arguments:")
-            print(json.dumps(arguments, ensure_ascii=False))
+            color_msg = "\033[1;32m"  # bright green
+            color_args = "\033[1;36m"  # bright cyan
+            reset = "\033[0m"
+            print(f"User message:")
+            print(f"{color_msg}{user_message.strip()}{reset}")
+            print(f"Arguments:")
+            print(f"{color_args}{json.dumps(arguments, ensure_ascii=False)}{reset}")
             if not _prompt_yes_no("Insert into dataset?", default=True):
                 print(f"[{idx + 1}] Skipped.")
                 continue
