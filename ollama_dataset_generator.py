@@ -96,7 +96,10 @@ def _build_step1_prompt(
 
 
 def _build_step2_prompt(
-    tool: Dict[str, Any], user_message: str, include_optional: bool
+    tool: Dict[str, Any],
+    user_message: str,
+    include_optional: bool,
+    examples: List[Tuple[str, Dict[str, Any]]],
 ) -> str:
     payload = {
         "name": tool.get("function", {}).get("name", ""),
@@ -119,9 +122,18 @@ def _build_step2_prompt(
         optional_note,
         "Tool schema:",
         json.dumps(payload, indent=2),
+    ]
+    if examples:
+        parts.append("Examples (message -> arguments). Use for guidance only:")
+        for message, args in examples:
+            parts.append(f"- message: {message}")
+            parts.append(f"  arguments: {json.dumps(args, ensure_ascii=False)}")
+    parts.extend(
+        [
         "User message:",
         user_message,
-    ]
+        ]
+    )
     return "\n".join(parts)
 
 
@@ -223,6 +235,16 @@ def _record_user_message(record: Dict[str, Any]) -> str:
     return ""
 
 
+def _record_arguments(record: Dict[str, Any]) -> Dict[str, Any]:
+    for msg in record.get("messages", []):
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            call = msg["tool_calls"][0]
+            args = call.get("function", {}).get("arguments", {})
+            if isinstance(args, dict):
+                return args
+    return {}
+
+
 def _recent_examples(
     records: List[Dict[str, Any]], tool_name: str, max_examples: int = 10
 ) -> List[str]:
@@ -233,6 +255,27 @@ def _recent_examples(
         user_msg = _clean_user_message(_record_user_message(record))
         if user_msg and not _looks_like_bad_example(user_msg):
             examples.append(user_msg)
+    if not examples:
+        return []
+    if len(examples) <= max_examples:
+        return examples
+    return random.sample(examples, k=max_examples)
+
+
+def _argument_examples(
+    records: List[Dict[str, Any]], tool_name: str, max_examples: int = 10
+) -> List[Tuple[str, Dict[str, Any]]]:
+    examples: List[Tuple[str, Dict[str, Any]]] = []
+    for record in records:
+        if _record_tool_name(record) != tool_name:
+            continue
+        user_msg = _clean_user_message(_record_user_message(record))
+        if not user_msg or _looks_like_bad_example(user_msg):
+            continue
+        arguments = _record_arguments(record)
+        if not isinstance(arguments, dict):
+            continue
+        examples.append((user_msg, arguments))
     if not examples:
         return []
     if len(examples) <= max_examples:
@@ -358,6 +401,7 @@ def main() -> None:
     tool = _find_tool(tools, args.tool)
     explanation = args.explanation.strip() or DEFAULT_EXPLANATION
     examples = _recent_examples(dataset_records, args.tool, max_examples=10)
+    argument_examples = _argument_examples(dataset_records, args.tool, max_examples=10)
     prompt_template = _build_step1_prompt(tool, explanation, examples)
     seen_messages = {ex.strip().lower() for ex in examples if ex.strip()}
 
@@ -398,7 +442,9 @@ def main() -> None:
             continue
         seen_messages.add(user_message.strip().lower())
 
-        step2_prompt = _build_step2_prompt(tool, user_message, args.include_optional)
+        step2_prompt = _build_step2_prompt(
+            tool, user_message, args.include_optional, argument_examples
+        )
         if args.debug:
             print(f"[{idx + 1}] Ollama step 2 prompt:")
             print(step2_prompt)
