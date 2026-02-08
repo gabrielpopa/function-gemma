@@ -127,11 +127,30 @@ python tools_builder.py
 
 ### Build Dataset Examples
 
-To add prompt + tool-call examples and save them as a dataset file, use the interactive dataset builder. It loads your tools file and writes records with `messages`, `tools`, and `metadata`.
+To add prompt + tool-call examples and save them as a dataset file, use the interactive dataset builder. It loads your tools file and writes records with `messages`, `tools`, and `metadata`. It also supports a CLI mode to append a single example without opening the menu.
 
 ```bash
 python dataset_builder.py
 ```
+
+Example (CLI add):
+
+```bash
+python dataset_builder.py --dataset data/dataset.jsonl --tool use --prompt "Use potion of healing on me" --arg object="potion of healing" --arg target="me"
+```
+
+### Generate Examples with Ollama
+
+Use the Ollama generator to synthesize user prompts + arguments for a specific tool and append them to your dataset via `dataset_builder.py`. It runs in two steps: (1) generate a user message, (2) extract tool arguments.
+
+```bash
+python ollama_dataset_generator.py --ollama-model llama2:13b --dataset data/dataset.jsonl --tool some_cool_tool --max-entries 10 --confirm
+```
+
+Optional flags:
+- `--metadata eval` to write into the eval split
+- `--include-optional` to encourage filling optional arguments
+- `--debug` to print prompts and raw outputs
 
 ### Convert to LiteRT-LM
 
