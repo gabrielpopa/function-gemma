@@ -71,12 +71,24 @@ class ToolStore:
         return True
 
 
-def _prompt_choice(prompt: str, options: List[str]) -> str:
+def _prompt_choice(
+    prompt: str,
+    options: List[str],
+    default: Optional[str] = None,
+    allow_back: bool = False,
+) -> Optional[str]:
     print(prompt)
+    if allow_back:
+        print("0) Return to main menu")
     for idx, option in enumerate(options, start=1):
         print(f"{idx}) {option}")
     while True:
-        selection = input("Select an option: ").strip()
+        default_hint = f" [{default}]" if default else ""
+        selection = input(f"Select an option{default_hint}: ").strip()
+        if allow_back and selection == "0":
+            return None
+        if not selection and default:
+            return default
         if selection.isdigit() and 1 <= int(selection) <= len(options):
             return options[int(selection) - 1]
         print("Invalid selection. Try again.")
@@ -127,11 +139,11 @@ def _save_tools(path: str, tools: List[Dict[str, Dict[str, object]]], file_forma
             file.write("\n")
 
 
-def _select_tool(store: ToolStore) -> str:
+def _select_tool(store: ToolStore, default_name: Optional[str] = None) -> Optional[str]:
     if not store.tools:
         raise ValueError("No tools defined yet.")
     tool_names = [tool["function"]["name"] for tool in store.tools]
-    return _prompt_choice("Select a tool:", tool_names)
+    return _prompt_choice("Select a tool:", tool_names, default=default_name, allow_back=True)
 
 
 def _print_tools(store: ToolStore) -> None:
@@ -178,6 +190,7 @@ def main() -> None:
     path = input(f"Enter path to save/load [{default_path}]: ").strip() or default_path
 
     store = _load_tools(path)
+    last_tool_name: Optional[str] = None
 
     while True:
         action = _prompt_choice(
@@ -200,13 +213,17 @@ def main() -> None:
                 continue
             description = _prompt_non_empty("Function description: ")
             store.add_tool(name, description)
+            last_tool_name = name
             print(f"Added tool '{name}'.")
         elif action == "Add a parameter to an existing tool":
             try:
-                tool_name = _select_tool(store)
+                tool_name = _select_tool(store, default_name=last_tool_name)
             except ValueError as exc:
                 print(exc)
                 continue
+            if tool_name is None:
+                continue
+            last_tool_name = tool_name
             param_name = _prompt_non_empty("Parameter name: ")
             param_type = _prompt_choice("Parameter type:", PARAMETER_TYPES)
             description = input("Parameter description (optional): ").strip()
@@ -225,28 +242,39 @@ def main() -> None:
             print(f"Added parameter '{param_name}' to '{tool_name}'.")
         elif action == "Delete a parameter from an existing tool":
             try:
-                tool_name = _select_tool(store)
+                tool_name = _select_tool(store, default_name=last_tool_name)
             except ValueError as exc:
                 print(exc)
                 continue
+            if tool_name is None:
+                continue
+            last_tool_name = tool_name
             tool = store.find_tool(tool_name)
             properties = tool["function"]["parameters"].get("properties", {})
             if not properties:
                 print("Selected tool has no parameters.")
                 continue
-            param_name = _prompt_choice("Select a parameter to delete:", list(properties.keys()))
+            param_name = _prompt_choice(
+                "Select a parameter to delete:", list(properties.keys()), allow_back=True
+            )
+            if param_name is None:
+                continue
             if store.delete_parameter(tool_name, param_name):
                 print(f"Deleted parameter '{param_name}' from '{tool_name}'.")
             else:
                 print("Parameter not found.")
         elif action == "Delete a tool/function":
             try:
-                tool_name = _select_tool(store)
+                tool_name = _select_tool(store, default_name=last_tool_name)
             except ValueError as exc:
                 print(exc)
                 continue
+            if tool_name is None:
+                continue
             if store.delete_tool(tool_name):
                 print(f"Deleted tool '{tool_name}'.")
+                if last_tool_name == tool_name:
+                    last_tool_name = None
             else:
                 print("Tool not found.")
         elif action == "View current tools":
