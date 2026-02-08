@@ -51,6 +51,25 @@ class ToolStore:
             if param_name not in required_list:
                 required_list.append(param_name)
 
+    def delete_tool(self, name: str) -> bool:
+        before = len(self.tools)
+        self.tools = [tool for tool in self.tools if tool["function"]["name"] != name]
+        return len(self.tools) != before
+
+    def delete_parameter(self, tool_name: str, param_name: str) -> bool:
+        tool = self.find_tool(tool_name)
+        if tool is None:
+            raise ValueError(f"Tool '{tool_name}' not found.")
+        parameters = tool["function"]["parameters"]
+        properties = parameters.get("properties", {})
+        if param_name not in properties:
+            return False
+        del properties[param_name]
+        required_list = parameters.get("required", [])
+        if param_name in required_list:
+            required_list.remove(param_name)
+        return True
+
 
 def _prompt_choice(prompt: str, options: List[str]) -> str:
     print(prompt)
@@ -120,12 +139,41 @@ def _print_tools(store: ToolStore) -> None:
         print("No tools defined yet.")
         return
     print("\nCurrent tools:")
-    print(json.dumps(store.tools, indent=2))
+    rows = []
+    for tool in store.tools:
+        fn = tool["function"]
+        name = fn.get("name", "")
+        desc = fn.get("description", "")
+        params = fn.get("parameters", {})
+        properties = params.get("properties", {})
+        required = set(params.get("required", []))
+        if not properties:
+            rows.append([name, desc, "-", "-", "-", "-"])
+            continue
+        for param_name, schema in properties.items():
+            ptype = schema.get("type", "STRING")
+            pdesc = schema.get("description", "")
+            preq = "yes" if param_name in required else "no"
+            rows.append([name, desc, param_name, ptype, preq, pdesc])
+
+    headers = ["Tool", "Description", "Param", "Type", "Required", "Param Description"]
+    col_widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            col_widths[i] = max(col_widths[i], len(str(cell)))
+
+    def _fmt_row(values: List[str]) -> str:
+        return " | ".join(str(values[i]).ljust(col_widths[i]) for i in range(len(values)))
+
+    print(_fmt_row(headers))
+    print("-+-".join("-" * w for w in col_widths))
+    for row in rows:
+        print(_fmt_row(row))
 
 
 def main() -> None:
     print("FunctionGemma Tool Builder")
-    file_format = _prompt_choice("Choose output format:", ["json", "jsonl"])
+    file_format = _prompt_choice("Choose output format:", ["jsonl", "json"])
     default_path = f"tools.{file_format}"
     path = input(f"Enter path to save/load [{default_path}]: ").strip() or default_path
 
@@ -137,6 +185,8 @@ def main() -> None:
             [
                 "Add a new tool/function",
                 "Add a parameter to an existing tool",
+                "Delete a parameter from an existing tool",
+                "Delete a tool/function",
                 "View current tools",
                 "Save and exit",
                 "Exit without saving",
@@ -173,6 +223,32 @@ def main() -> None:
                 array_item_type=array_item_type,
             )
             print(f"Added parameter '{param_name}' to '{tool_name}'.")
+        elif action == "Delete a parameter from an existing tool":
+            try:
+                tool_name = _select_tool(store)
+            except ValueError as exc:
+                print(exc)
+                continue
+            tool = store.find_tool(tool_name)
+            properties = tool["function"]["parameters"].get("properties", {})
+            if not properties:
+                print("Selected tool has no parameters.")
+                continue
+            param_name = _prompt_choice("Select a parameter to delete:", list(properties.keys()))
+            if store.delete_parameter(tool_name, param_name):
+                print(f"Deleted parameter '{param_name}' from '{tool_name}'.")
+            else:
+                print("Parameter not found.")
+        elif action == "Delete a tool/function":
+            try:
+                tool_name = _select_tool(store)
+            except ValueError as exc:
+                print(exc)
+                continue
+            if store.delete_tool(tool_name):
+                print(f"Deleted tool '{tool_name}'.")
+            else:
+                print("Tool not found.")
         elif action == "View current tools":
             _print_tools(store)
         elif action == "Save and exit":
