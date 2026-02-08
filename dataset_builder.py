@@ -21,6 +21,7 @@ class ExampleSettings:
     metadata: str = "train"
     include_all_tools: bool = True
     selected_tool_name: Optional[str] = None
+    instruction_role: str = "developer"
     use_default_developer_prompt: bool = True
     developer_prompt: Optional[str] = None
     use_json_arguments: bool = False
@@ -99,6 +100,18 @@ def _load_tools(path: str) -> List[Dict[str, Any]]:
     if not isinstance(tools, list):
         raise ValueError("Tools file must contain a list of tool definitions.")
     return tools
+
+
+def _extract_tools_from_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    tools_map: Dict[str, Dict[str, Any]] = {}
+    for record in records:
+        record_tools = record.get("tools", [])
+        if isinstance(record_tools, list):
+            for tool in record_tools:
+                name = tool.get("function", {}).get("name")
+                if name:
+                    tools_map[name] = tool
+    return list(tools_map.values())
 
 
 def _select_tool(
@@ -203,6 +216,17 @@ def _build_messages(
     settings: Optional[ExampleSettings] = None,
     skip_developer_prompt: bool = False,
 ) -> List[Dict[str, Any]]:
+    instruction_role = "developer"
+    if settings is not None:
+        instruction_role = settings.instruction_role
+    if not skip_developer_prompt:
+        instruction_role = _prompt_choice(
+            "Instruction role:",
+            ["developer", "system", "user"],
+            default=instruction_role,
+        )
+        if settings is not None:
+            settings.instruction_role = instruction_role
     if skip_developer_prompt and settings is not None:
         if settings.use_default_developer_prompt:
             developer_prompt = _default_developer_prompt()
@@ -232,7 +256,7 @@ def _build_messages(
     user_prompt = _prompt_non_empty("User prompt: ")
     arguments = _collect_tool_arguments(tool, settings=settings)
     return [
-        {"role": "developer", "content": developer_prompt},
+        {"role": instruction_role, "content": developer_prompt},
         {"role": "user", "content": user_prompt},
         {
             "role": "assistant",
@@ -429,28 +453,161 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--tools",
-        default="tools.jsonl",
-        help="Path to tools file (json/jsonl). Default: tools.jsonl",
+        default="",
+        help="Path to tools file (json/jsonl). If omitted, tools are extracted from dataset.",
     )
     parser.add_argument(
         "--dataset",
         default="dataset.jsonl",
         help="Path to dataset file (json/jsonl). Default: dataset.jsonl",
     )
+    parser.add_argument(
+        "--tool-name",
+        "--tool",
+        dest="tool_name",
+        default="",
+        help="Tool name to use when adding a single example via CLI.",
+    )
+    parser.add_argument(
+        "--prompt",
+        default="",
+        help="User prompt to use when adding a single example via CLI.",
+    )
+    parser.add_argument(
+        "--metadata",
+        default="",
+        help="Metadata label for the record (default: train).",
+    )
+    parser.add_argument(
+        "--instruction-role",
+        default="developer",
+        help="Role for the instruction message (developer/system/user). Default: developer.",
+    )
+    parser.add_argument(
+        "--arg",
+        action="append",
+        default=[],
+        help="Tool argument in key=value form. Can be repeated.",
+    )
+    parser.add_argument(
+        "--arg-json",
+        default="",
+        help="Tool arguments as a JSON object (merged with --arg).",
+    )
+    parser.add_argument(
+        "--only-tool",
+        action="store_true",
+        help="Include only the selected tool (instead of all tools).",
+    )
     return parser.parse_args(argv)
+
+
+def _coerce_arg_value(raw: str) -> Any:
+    raw = raw.strip()
+    if raw == "":
+        return raw
+    if raw[0] in "-0123456789tfn[{\"":
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return raw
+    return raw
+
+
+def _parse_cli_tool_arguments(args: argparse.Namespace) -> Dict[str, Any]:
+    arguments: Dict[str, Any] = {}
+    if args.arg_json:
+        try:
+            parsed = json.loads(args.arg_json)
+            if not isinstance(parsed, dict):
+                raise ValueError("--arg-json must be a JSON object.")
+            arguments.update(parsed)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON for --arg-json: {exc}") from exc
+    for item in args.arg:
+        if "=" not in item:
+            raise ValueError(f"Invalid --arg '{item}'. Expected key=value.")
+        key, value = item.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(f"Invalid --arg '{item}'. Key cannot be empty.")
+        arguments[key] = _coerce_arg_value(value)
+    return arguments
+
+
+def _validate_required_args(tool: Dict[str, Any], arguments: Dict[str, Any]) -> None:
+    parameters = tool.get("function", {}).get("parameters", {})
+    required = parameters.get("required", [])
+    missing = [name for name in required if name not in arguments]
+    if missing:
+        raise ValueError(f"Missing required arguments: {', '.join(missing)}")
+
+
+def _build_record_from_cli(
+    tools: List[Dict[str, Any]], args: argparse.Namespace
+) -> Dict[str, Any]:
+    if not args.tool_name:
+        raise ValueError("Missing --tool-name/--tool.")
+    if not args.prompt:
+        raise ValueError("Missing --prompt.")
+    tool = next(
+        (t for t in tools if t.get("function", {}).get("name") == args.tool_name),
+        None,
+    )
+    if tool is None:
+        raise ValueError(f"Tool '{args.tool_name}' not found.")
+    metadata = args.metadata or "train"
+    arguments = _parse_cli_tool_arguments(args)
+    _validate_required_args(tool, arguments)
+    tools_to_use = [tool] if args.only_tool else tools
+    messages = [
+        {"role": args.instruction_role, "content": _default_developer_prompt()},
+        {"role": "user", "content": args.prompt},
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"function": {"name": tool["function"]["name"], "arguments": arguments}}
+            ],
+        },
+    ]
+    return {"messages": messages, "tools": tools_to_use, "metadata": metadata}
 
 
 def main() -> None:
     print("FunctionGemma Dataset Builder")
     args = _parse_args(sys.argv[1:])
     tools_path = args.tools
-    tools = _load_tools(tools_path)
 
+    cli_add_mode = bool(
+        args.tool_name or args.prompt or args.metadata or args.arg or args.arg_json or args.only_tool
+    )
     dataset_path = args.dataset
-    if "--dataset" not in sys.argv[1:]:
+    if not cli_add_mode and "--dataset" not in sys.argv[1:]:
         dataset_path = input(f"Enter dataset path to save/load [{dataset_path}]: ").strip() or dataset_path
     file_format = _infer_format_from_path(dataset_path)
     store = DatasetStore(records=_load_json_or_jsonl(dataset_path))
+    tools: List[Dict[str, Any]] = []
+    if tools_path:
+        try:
+            tools = _load_tools(tools_path)
+        except (ValueError, KeyError):
+            tools = []
+    if not tools:
+        tools = _extract_tools_from_records(store.records)
+    if not tools:
+        print("No tools found. Provide --tools or add tools to the dataset records.")
+        if cli_add_mode:
+            sys.exit(1)
+    if cli_add_mode:
+        try:
+            record = _build_record_from_cli(tools, args)
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
+        store.records.append(record)
+        _save_json_or_jsonl(dataset_path, store.records, file_format=file_format)
+        print(f"Saved dataset to {dataset_path}.")
+        return
     last_settings: Optional[ExampleSettings] = None
     last_tool_name: Optional[str] = None
     last_split: Optional[str] = None
