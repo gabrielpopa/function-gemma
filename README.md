@@ -75,7 +75,6 @@ functiongemma/
 ├── train.py                  # Main training script
 ├── convert.py                # Convert model to mobile format
 ├── token.txt                 # Your HF_TOKEN (add to .gitignore)
-├── venv_train/              # Virtual environment
 └── outputs/                 # (Created after training)
     ├── checkpoints/         # Training checkpoints
     ├── mobile-actions-functiongemma/  # Fine-tuned model
