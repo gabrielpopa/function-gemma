@@ -340,7 +340,11 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
     )
     parser.add_argument("--ollama-model", required=True, help="Ollama model name.")
     parser.add_argument("--dataset", required=True, help="Dataset JSON/JSONL file.")
-    parser.add_argument("--tool", required=True, help="Tool name to generate entries for.")
+    parser.add_argument(
+        "--tool",
+        default="",
+        help="Tool name to generate entries for. If omitted, iterates all tools.",
+    )
     parser.add_argument(
         "--max-entries", type=int, default=10, help="Number of entries to generate (default: 10)."
     )
@@ -406,107 +410,123 @@ def main() -> None:
         print("No tools found. Provide --tools or ensure the dataset contains tools.")
         sys.exit(1)
 
-    tool = _find_tool(tools, args.tool)
+    tool_list: List[Dict[str, Any]] = []
+    if args.tool:
+        tool_list = [_find_tool(tools, args.tool)]
+    else:
+        tool_list = tools
+
     explanation = args.explanation.strip() or DEFAULT_EXPLANATION
-    examples = _recent_examples(dataset_records, args.tool, max_examples=10)
-    argument_examples = _argument_examples(dataset_records, args.tool, max_examples=10)
-    prompt_template = _build_step1_prompt(tool, explanation, examples)
-    seen_messages = {ex.strip().lower() for ex in examples if ex.strip()}
+    total_successes = 0
 
-    if args.debug:
-        print("Ollama step 1 prompt:")
-        print(prompt_template)
-        print("-" * 40)
+    for tool in tool_list:
+        tool_name = tool.get("function", {}).get("name", "")
+        if not tool_name:
+            continue
+        examples = _recent_examples(dataset_records, tool_name, max_examples=10)
+        argument_examples = _argument_examples(dataset_records, tool_name, max_examples=10)
+        prompt_template = _build_step1_prompt(tool, explanation, examples)
+        seen_messages = {ex.strip().lower() for ex in examples if ex.strip()}
 
-    successes = 0
-    for idx in range(args.max_entries):
-        user_message = ""
-        for attempt in range(args.max_retries + 1):
-            try:
-                output = _run_ollama(args.ollama_model, prompt_template)
-            except RuntimeError as exc:
-                print(f"[{idx + 1}] Ollama error: {exc}")
-                output = ""
-            if args.debug:
-                print(f"[{idx + 1}] Raw Ollama step 1 output:")
-                print(output)
-                print("-" * 40)
-            user_message = _extract_message_json(output)
+        if args.debug:
+            print(f"Ollama step 1 prompt (tool: {tool_name}):")
+            print(prompt_template)
+            print("-" * 40)
+
+        successes = 0
+        for idx in range(args.max_entries):
+            user_message = ""
+            for attempt in range(args.max_retries + 1):
+                try:
+                    output = _run_ollama(args.ollama_model, prompt_template)
+                except RuntimeError as exc:
+                    print(f"[{tool_name} {idx + 1}] Ollama error: {exc}")
+                    output = ""
+                if args.debug:
+                    print(f"[{tool_name} {idx + 1}] Raw Ollama step 1 output:")
+                    print(output)
+                    print("-" * 40)
+                user_message = _extract_message_json(output)
+                if not user_message:
+                    if attempt >= args.max_retries:
+                        break
+                    continue
+                if user_message.strip().lower() in seen_messages:
+                    if attempt >= args.max_retries:
+                        break
+                    prompt_template = (
+                        prompt_template
+                        + "\nDo NOT repeat any previous example. Use different object and target.\n"
+                    )
+                    continue
+                break
             if not user_message:
-                if attempt >= args.max_retries:
-                    break
+                print(f"[{tool_name} {idx + 1}] Empty or repeated user message. Skipping.")
                 continue
-            if user_message.strip().lower() in seen_messages:
-                if attempt >= args.max_retries:
-                    break
-                prompt_template = (
-                    prompt_template
-                    + "\nDo NOT repeat any previous example. Use different object and target.\n"
+            seen_messages.add(user_message.strip().lower())
+
+            step2_prompt = _build_step2_prompt(
+                tool, user_message, args.include_optional, argument_examples
+            )
+            if args.debug:
+                print(f"[{tool_name} {idx + 1}] Ollama step 2 prompt:")
+                print(step2_prompt)
+                print("-" * 40)
+
+            try:
+                output2 = _run_ollama(args.ollama_model, step2_prompt)
+            except RuntimeError as exc:
+                print(f"[{tool_name} {idx + 1}] Ollama error (step 2): {exc}")
+                continue
+
+            if args.debug:
+                print(f"[{tool_name} {idx + 1}] Raw Ollama step 2 output:")
+                print(output2)
+                print("-" * 40)
+
+            arguments = _extract_json_from_text(output2)
+            if not arguments:
+                print(f"[{tool_name} {idx + 1}] Could not parse arguments JSON. Skipping.")
+                continue
+            if not isinstance(arguments, dict):
+                print(f"[{tool_name} {idx + 1}] Arguments must be a JSON object. Skipping.")
+                continue
+
+            ok, missing = _validate_arguments(tool, arguments)
+            if not ok:
+                print(
+                    f"[{tool_name} {idx + 1}] Missing required args: {', '.join(missing)}. Skipping."
                 )
                 continue
-            break
-        if not user_message:
-            print(f"[{idx + 1}] Empty or repeated user message. Skipping.")
-            continue
-        seen_messages.add(user_message.strip().lower())
 
-        step2_prompt = _build_step2_prompt(
-            tool, user_message, args.include_optional, argument_examples
-        )
-        if args.debug:
-            print(f"[{idx + 1}] Ollama step 2 prompt:")
-            print(step2_prompt)
-            print("-" * 40)
+            if args.confirm:
+                color_msg = "\033[1;32m"  # bright green
+                color_args = "\033[1;36m"  # bright cyan
+                reset = "\033[0m"
+                print(f"{color_msg}Metadata:{reset} {args.metadata}")
+                print("User message:")
+                print(f"{color_msg}{user_message.strip()}{reset}")
+                print(f"Arguments:")
+                print(f"{color_args}{json.dumps(arguments, ensure_ascii=False)}{reset}")
+                if not _prompt_yes_no("Insert into dataset?", default=True):
+                    print(f"[{tool_name} {idx + 1}] Skipped.")
+                    continue
 
-        try:
-            output2 = _run_ollama(args.ollama_model, step2_prompt)
-        except RuntimeError as exc:
-            print(f"[{idx + 1}] Ollama error (step 2): {exc}")
-            continue
-
-        if args.debug:
-            print(f"[{idx + 1}] Raw Ollama step 2 output:")
-            print(output2)
-            print("-" * 40)
-
-        arguments = _extract_json_from_text(output2)
-        if not arguments:
-            print(f"[{idx + 1}] Could not parse arguments JSON. Skipping.")
-            continue
-        if not isinstance(arguments, dict):
-            print(f"[{idx + 1}] Arguments must be a JSON object. Skipping.")
-            continue
-
-        ok, missing = _validate_arguments(tool, arguments)
-        if not ok:
-            print(f"[{idx + 1}] Missing required args: {', '.join(missing)}. Skipping.")
-            continue
-
-        if args.confirm:
-            color_msg = "\033[1;32m"  # bright green
-            color_args = "\033[1;36m"  # bright cyan
-            reset = "\033[0m"
-            print(f"{color_msg}Metadata:{reset} {args.metadata}")
-            print("User message:")
-            print(f"{color_msg}{user_message.strip()}{reset}")
-            print(f"Arguments:")
-            print(f"{color_args}{json.dumps(arguments, ensure_ascii=False)}{reset}")
-            if not _prompt_yes_no("Insert into dataset?", default=True):
-                print(f"[{idx + 1}] Skipped.")
+            try:
+                _call_dataset_builder(
+                    args.dataset, tool_name, user_message.strip(), arguments, args.metadata
+                )
+            except RuntimeError as exc:
+                print(f"[{tool_name} {idx + 1}] dataset_builder error: {exc}")
                 continue
 
-        try:
-            _call_dataset_builder(
-                args.dataset, args.tool, user_message.strip(), arguments, args.metadata
-            )
-        except RuntimeError as exc:
-            print(f"[{idx + 1}] dataset_builder error: {exc}")
-            continue
+            successes += 1
+            total_successes += 1
+            print(f"[{tool_name} {idx + 1}] Added entry.")
 
-        successes += 1
-        print(f"[{idx + 1}] Added entry.")
+        print(f"Completed for tool '{tool_name}'. Added {successes}/{args.max_entries} entries.")
 
-    print(f"Completed. Added {successes}/{args.max_entries} entries.")
+    print(f"Completed. Added {total_successes} total entries.")
 
 
 if __name__ == "__main__":
