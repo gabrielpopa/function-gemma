@@ -6,23 +6,6 @@ from ai_edge_torch.generative.utilities import converter
 from ai_edge_torch.generative.utilities.export_config import ExportConfig
 from ai_edge_torch.generative.layers import kv_cache
 
-# Metadata for FunctionGemma
-llm_metadata = r"""start_token: {
-    token_ids: {
-        ids: [ 2 ]
-    }
-}
-stop_tokens: {
-    token_str: "<end_of_turn>"
-}
-stop_tokens: {
-    token_str: "<eos>"
-}
-llm_model_type: {
-    function_gemma: {}
-}
-"""
-
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Convert a fine-tuned FunctionGemma checkpoint to LiteRT-LM format.")
     parser.add_argument("--checkpoint_dir", default="functiongemma-270m-it-mobile-actions-sft")
@@ -87,8 +70,37 @@ if not os.path.exists(tokenizer_model_path):
         "Fix: re-run `train.py` (it now exports tokenizer.model) or copy it from the base model repo into the "
         "checkpoint directory."
     )
+import sentencepiece as spm
+sp = spm.SentencePieceProcessor(model_file=tokenizer_model_path)
 
+    #   "<start_function_declaration>": 46,
+    #   "<end_function_declaration>": 47,
+    #   "<start_function_call>": 48,
+    #   "<end_function_call>": 49,
+    #   "<start_function_response>": 50,
+    #   "<end_function_response>": 51,
 # Create the LLM metadata file
+
+start_ids = [sp.piece_to_id("<bos>")]
+# Generate the lines dynamically
+start_lines = "\n".join([f"    ids: {i}" for i in start_ids])
+
+# Metadata for FunctionGemma
+llm_metadata = f"""
+start_token {{
+  token_ids {{
+{start_lines}
+  }}
+}}
+stop_tokens {{ token_ids {{ ids: {sp.piece_to_id("<end_of_turn>")} }} }}
+stop_tokens {{ token_ids {{ ids: {sp.piece_to_id("<start_function_response>")} }} }}
+llm_model_type: {{
+    function_gemma: {{}}
+}}
+"""
+
+
+print("llm_metadata:\n", llm_metadata)
 metadata_path = os.path.join(litertlm_output_dir, 'base_llm_metadata.textproto')
 with open(metadata_path, 'w') as f:
   f.write(llm_metadata)
@@ -136,11 +148,8 @@ try:
         tokenizer_model_path=tokenizer_model_path,
         base_llm_metadata_path=metadata_path,
         output_format="litertlm",
-        model_prompt_prefix="<start_of_turn>model\n",
-        model_prompt_suffix="<end_of_turn>\n",
-        user_prompt_prefix="<start_of_turn>user\n",
-        user_prompt_suffix="<end_of_turn>\n",
     )
+    print(f"Conversion completed successfully on device {requested_device} with dtype {model_dtype}.")
 except RuntimeError as exc:
     print(f"Error during conversion: {exc}")
     if requested_device == "cpu":
@@ -162,8 +171,4 @@ except RuntimeError as exc:
         tokenizer_model_path=tokenizer_model_path,
         base_llm_metadata_path=metadata_path,
         output_format="litertlm",
-        model_prompt_prefix="<start_of_turn>model\n",
-        model_prompt_suffix="<end_of_turn>\n",
-        user_prompt_prefix="<start_of_turn>user\n",
-        user_prompt_suffix="<end_of_turn>\n",
     )

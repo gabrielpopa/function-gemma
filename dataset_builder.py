@@ -95,6 +95,30 @@ def _save_json_or_jsonl(path: str, records: List[Dict[str, Any]], file_format: s
             file.write("\n")
 
 
+def _build_simple_export(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    exported: List[Dict[str, Any]] = []
+    for record in records:
+        user_content = _extract_user_prompt(record)
+        tool_name = _extract_tool_name(record)
+        arguments = _extract_arguments(record)
+        exported.append(
+            {
+                "user_content": user_content,
+                "tool_name": tool_name,
+                "tool_arguments": json.dumps(arguments, ensure_ascii=False),
+            }
+        )
+    return exported
+
+
+def _save_simple_json(path: str, records: List[Dict[str, Any]]) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    exported = _build_simple_export(records)
+    with open(path, "w", encoding="utf-8") as file:
+        json.dump(exported, file, ensure_ascii=False, indent=2)
+        file.write("\n")
+
+
 def _load_tools(path: str) -> List[Dict[str, Any]]:
     tools = _load_json_or_jsonl(path)
     if not isinstance(tools, list):
@@ -635,6 +659,14 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
         action="store_true",
         help="Include only the selected tool (instead of all tools).",
     )
+    parser.add_argument(
+        "--export-simple",
+        default="",
+        help=(
+            "Export a simplified JSON dataset (user_content/tool_name/tool_arguments) "
+            "to the provided path and exit. Works with or without CLI add mode."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -765,6 +797,13 @@ def main() -> None:
         store.records.append(record)
         _save_json_or_jsonl(dataset_path, store.records, file_format=file_format)
         print(f"Saved dataset to {dataset_path}.")
+        if args.export_simple:
+            _save_simple_json(args.export_simple, store.records)
+            print(f"Exported simplified dataset to {args.export_simple}.")
+        return
+    if args.export_simple:
+        _save_simple_json(args.export_simple, store.records)
+        print(f"Exported simplified dataset to {args.export_simple}.")
         return
     last_settings: ExampleSettings = ExampleSettings(
         metadata="train",
@@ -787,6 +826,7 @@ def main() -> None:
                 "Show dataset for a tool",
                 "Set instruction role/prompt",
                 "Delete entry for a tool",
+                "Export simplified JSON",
                 "Save and exit",
                 "Exit without saving",
             ],
@@ -842,6 +882,13 @@ def main() -> None:
                 )
             except ValueError as exc:
                 print(exc)
+        elif action == "Export simplified JSON":
+            default_export_path = "dataset.json"
+            export_path = input(
+                f"Enter export path [{default_export_path}]: "
+            ).strip() or default_export_path
+            _save_simple_json(export_path, store.records)
+            print(f"Exported simplified dataset to {export_path}.")
         elif action == "Save and exit":
             _save_json_or_jsonl(dataset_path, store.records, file_format=file_format)
             print(f"Saved dataset to {dataset_path}.")

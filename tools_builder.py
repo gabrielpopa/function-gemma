@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 
-PARAMETER_TYPES = ["STRING", "INTEGER", "NUMBER", "BOOLEAN", "ARRAY", "OBJECT"]
+PARAMETER_TYPES = ["string", "integer", "number", "boolean", "array", "object"]
 
 
 @dataclass
@@ -18,10 +18,11 @@ class ToolStore:
     def add_tool(self, name: str, description: str) -> None:
         self.tools.append(
             {
+                "type": "function",
                 "function": {
                     "name": name,
                     "description": description,
-                    "parameters": {"type": "OBJECT", "properties": {}, "required": []},
+                    "parameters": {"type": "object", "properties": {}, "required": []},
                 }
             }
         )

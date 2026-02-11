@@ -383,12 +383,25 @@ def main():
         )
 
     passed = sum(1 for r in results if r.get("status") == "pass")
+    wrong_tool_total = sum(1 for r in results if r.get("status") == "wrong_tool")
+    wrong_params_total = sum(1 for r in results if r.get("status") == "wrong_params")
+    no_call_total = sum(1 for r in results if r.get("status") == "no_call")
     failed = len(results) - passed
 
     print(f"\n{'='*60}")
     print("Evaluation Summary")
     print(f"{'='*60}")
-    print(f"Total: {len(results)} | Passed: {passed} | Failed: {failed}")
+    print(
+        "Total: {total} | Passed: {passed} | Failed: {failed} | "
+        "Wrong Tool: {wrong_tool} | Wrong Params: {wrong_params} | No Call: {no_call}".format(
+            total=len(results),
+            passed=passed,
+            failed=failed,
+            wrong_tool=wrong_tool_total,
+            wrong_params=wrong_params_total,
+            no_call=no_call_total,
+        )
+    )
 
     headers = ["Tool", "Total", "Pass", "Wrong Tool", "Wrong Params", "No Call"]
     rows = []
