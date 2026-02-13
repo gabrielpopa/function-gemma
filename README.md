@@ -75,7 +75,6 @@ functiongemma/
 ├── train.py                  # Main training script
 ├── convert.py                # Convert model to mobile format
 ├── token.txt                 # Your HF_TOKEN (add to .gitignore)
-├── venv_train/              # Virtual environment
 └── outputs/                 # (Created after training)
     ├── checkpoints/         # Training checkpoints
     ├── mobile-actions-functiongemma/  # Fine-tuned model
@@ -87,7 +86,7 @@ functiongemma/
 ### Run the Training Script
 
 ```bash
-python train.py --max_length 1024 --per_device_train_batch_size 1  --per_device_eval_batch_size 1  --gradient_accumulation_steps 16 --bf16
+python train.py --max_length 4096 --per_device_train_batch_size 1  --per_device_eval_batch_size 1  --gradient_accumulation_steps 16 --bf16
 ```
 
 The script performs the following steps:
@@ -127,11 +126,30 @@ python tools_builder.py
 
 ### Build Dataset Examples
 
-To add prompt + tool-call examples and save them as a dataset file, use the interactive dataset builder. It loads your tools file and writes records with `messages`, `tools`, and `metadata`.
+To add prompt + tool-call examples and save them as a dataset file, use the interactive dataset builder. It loads your tools file and writes records with `messages`, `tools`, and `metadata`. It also supports a CLI mode to append a single example without opening the menu.
 
 ```bash
 python dataset_builder.py
 ```
+
+Example (CLI add):
+
+```bash
+python dataset_builder.py --dataset data/dataset.jsonl --tool use --prompt "Use potion of healing on me" --arg object="potion of healing" --arg target="me"
+```
+
+### Generate Examples with Ollama
+
+Use the Ollama generator to synthesize user prompts + arguments for a specific tool and append them to your dataset via `dataset_builder.py`. It runs in two steps: (1) generate a user message, (2) extract tool arguments.
+
+```bash
+python ollama_dataset_generator.py --ollama-model llama2:13b --dataset data/dataset.jsonl --tool some_cool_tool --max-entries 10 --confirm
+```
+
+Optional flags:
+- `--metadata eval` to write into the eval split
+- `--include-optional` to encourage filling optional arguments
+- `--debug` to print prompts and raw outputs
 
 ### Convert to LiteRT-LM
 
@@ -162,11 +180,41 @@ args = SFTConfig(
 )
 ```
 
+### Small Dataset Tweaks
+
+If training finishes too quickly, it usually means the dataset is small. To get more learning signal:
+1. Increase `--num_train_epochs` (e.g., 5–20) so the model sees the data more times.
+2. Reduce `--gradient_accumulation_steps` (e.g., 1–4) to increase update steps per epoch.
+3. Tune `--learning_rate` within `1e-5` to `5e-6` and watch eval loss; tiny datasets often overfit quickly.
+4. Keep `--per_device_train_batch_size` small (1–2) if memory is tight, but avoid too-large effective batch sizes on tiny datasets.
+5. Ensure `--max_length` is high enough to include full tool calls; truncation can lead to poor or zero loss.
+6. Add an eval split and set `--eval_strategy steps` with a small `--eval_steps` to monitor overfitting early.
+
+If you see a `train_loss` of `0.0` from the start, inspect a few dataset rows to confirm that `messages` include an assistant tool call and that the completion portion is non-empty.
+
 ### Estimated Training Time
 
 - **A100 GPU**: ~8-10 minutes per epoch
 - **V100/RTX**: ~15-20 minutes per epoch
 - **CPU**: Not recommended (6+ hours)
+
+### Interpreting Training Logs
+
+What to look for in logs:
+1. **Non-zero loss**: `train_loss` should be > 0 and usually decreases over time. A constant `0.0` loss means no learning signal (often empty completions or all labels masked).
+2. **Gradient norm**: `grad_norm` should be > 0. If it’s always `0.0`, gradients are not flowing (typically due to empty/fully-masked labels).
+3. **Eval loss**: `eval_loss` should be a real number. If it’s `nan`, you likely have **no eval data** or empty/invalid eval examples.
+4. **Learning rate**: It will decay if using a scheduler; this is expected and not an error.
+
+Common causes of `loss=0.0` / `grad_norm=0.0`:
+1. The **assistant completion is empty** (no tool call in the last message).
+2. The prompt **equals the full sequence**, so all labels are masked (`-100`).
+3. Examples are **truncated**, leaving no completion tokens.
+
+Quick sanity checks:
+1. Open the printed “formatted dataset example” from `train.py` and ensure `completion` is non-empty.
+2. Confirm `metadata` is exactly `train` or `eval`. Any other value is ignored by the split filters.
+3. Ensure at least one `eval` record exists if you expect eval metrics.
 
 ## Understanding the Model
 

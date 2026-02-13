@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 
-PARAMETER_TYPES = ["STRING", "INTEGER", "NUMBER", "BOOLEAN", "ARRAY", "OBJECT"]
+PARAMETER_TYPES = ["string", "integer", "number", "boolean", "array", "object"]
 
 
 @dataclass
@@ -18,10 +18,11 @@ class ToolStore:
     def add_tool(self, name: str, description: str) -> None:
         self.tools.append(
             {
+                "type": "function",
                 "function": {
                     "name": name,
                     "description": description,
-                    "parameters": {"type": "OBJECT", "properties": {}, "required": []},
+                    "parameters": {"type": "object", "properties": {}, "required": []},
                 }
             }
         )
@@ -201,6 +202,7 @@ def main() -> None:
                 "Delete a parameter from an existing tool",
                 "Delete a tool/function",
                 "View current tools",
+                "Export tools to another format",
                 "Save and exit",
                 "Exit without saving",
             ],
@@ -279,6 +281,18 @@ def main() -> None:
                 print("Tool not found.")
         elif action == "View current tools":
             _print_tools(store)
+        elif action == "Export tools to another format":
+            if not store.tools:
+                print("No tools defined yet.")
+                continue
+            export_format = _prompt_choice("Choose export format:", ["json", "jsonl"])
+            default_export_path = f"tools.{export_format}"
+            export_path = (
+                input(f"Enter export path [{default_export_path}]: ").strip()
+                or default_export_path
+            )
+            _save_tools(export_path, store.tools, file_format=export_format)
+            print(f"Exported tools to {export_path}.")
         elif action == "Save and exit":
             _save_tools(path, store.tools, file_format=file_format)
             print(f"Saved tools to {path}.")
