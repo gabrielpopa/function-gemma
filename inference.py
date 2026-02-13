@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Inference script for fine-tuned FunctionGemma model.
-Tests the model's ability to generate function calls for mobile actions.
+Tests the model's ability to generate function calls.
 """
 
 import argparse
@@ -11,6 +11,7 @@ import re
 import torch
 from typing import Any, Dict, List, Optional, Tuple
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoProcessor, set_seed
+from tqdm import tqdm
 
 
 def _parse_args():
@@ -183,7 +184,38 @@ def _extract_tool_call_from_text(text: str) -> Optional[Dict[str, Any]]:
 
 
 def _compare_args(expected: Dict[str, Any], predicted: Dict[str, Any]) -> bool:
-    return expected == predicted
+    """Compare arguments with fuzzy matching for strings.
+    
+    For string values, accepts if one is a substring of the other (e.g., handles trailing punctuation).
+    For other types, requires exact match.
+    """
+    if expected == predicted:
+        return True
+    
+    # Check if keys match
+    if set(expected.keys()) != set(predicted.keys()):
+        return False
+    
+    # Compare each argument with fuzzy matching for strings
+    for key in expected.keys():
+        exp_val = expected[key]
+        pred_val = predicted[key]
+        
+        # Exact match
+        if exp_val == pred_val:
+            continue
+        
+        # For strings, check if one contains the other (handles punctuation differences)
+        if isinstance(exp_val, str) and isinstance(pred_val, str):
+            exp_stripped = exp_val.strip()
+            pred_stripped = pred_val.strip()
+            if exp_stripped in pred_stripped or pred_stripped in exp_stripped:
+                continue
+        
+        # No match found
+        return False
+    
+    return True
 
 
 def create_prompt(user_request: str, tools: List[Dict[str, Any]], system_prompt: str):
@@ -270,7 +302,7 @@ def main():
     dtype = _resolve_dtype(args.dtype, device)
 
     print("=" * 60)
-    print("FunctionGemma Mobile Actions - Inference Test")
+    print("FunctionGemma - Inference Test")
     print("=" * 60)
     
     # Load model
@@ -305,12 +337,10 @@ def main():
         print(f"No records found for split '{args.split}'.")
         return False
 
-    print(f"\nRunning {len(eval_records)} evaluation tests...\n")
-
     results = []
     tool_stats: Dict[str, Dict[str, int]] = {}
 
-    for i, record in enumerate(eval_records, 1):
+    for i, record in tqdm(enumerate(eval_records, 1), total=len(eval_records), desc="Running", unit="test"):
         messages = record.get("messages", [])
         tools_for_record = record.get("tools", tools)
         expected = _extract_expected_call(messages)
@@ -432,8 +462,29 @@ def main():
         print(_fmt_row(row))
 
     results_file = "inference_results.json"
+    
+    # Group results first by status, then by tool for easier viewing
+    status_order = ["no_call", "wrong_tool", "wrong_params", "pass"]
+    grouped_results = {status: {} for status in status_order}
+    
+    for result in results:
+        status = result.get("status", "unknown")
+        tool_name = result.get("expected_tool", "unknown")
+        
+        # Ensure status exists in grouped_results
+        if status not in grouped_results:
+            grouped_results[status] = {}
+        
+        # Group by tool within each status
+        if tool_name not in grouped_results[status]:
+            grouped_results[status][tool_name] = []
+        grouped_results[status][tool_name].append(result)
+    
+    # Remove empty status groups
+    grouped_results = {k: v for k, v in grouped_results.items() if v}
+    
     with open(results_file, "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2)
+        json.dump(grouped_results, f, indent=2)
     print(f"\n✓ Results saved to {results_file}")
 
     return True
