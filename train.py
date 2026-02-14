@@ -87,7 +87,7 @@ def _parse_args() -> ScriptArgs:
     parser.add_argument("--num_train_epochs", type=float, default=2)
     parser.add_argument("--per_device_train_batch_size", type=int, default=4)
     parser.add_argument("--per_device_eval_batch_size", type=int, default=4)
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=8)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=16)
     parser.add_argument("--learning_rate", type=float, default=1e-5)
     parser.add_argument("--logging_steps", type=int, default=25)
     parser.add_argument("--eval_steps", type=int, default=50)

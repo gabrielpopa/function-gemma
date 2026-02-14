@@ -485,9 +485,9 @@ def main() -> None:
                 print("-" * 40)
 
             arguments = _extract_json_from_text(output2)
-            if not arguments:
-                print(f"[{tool_name} {idx + 1}] Could not parse arguments JSON. Skipping.")
-                continue
+            # if not arguments:
+            #     print(f"[{tool_name} {idx + 1}] Could not parse arguments JSON. Skipping.")
+            #     continue
             if not isinstance(arguments, dict):
                 print(f"[{tool_name} {idx + 1}] Arguments must be a JSON object. Skipping.")
                 continue

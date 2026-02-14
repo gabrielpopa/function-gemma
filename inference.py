@@ -19,8 +19,10 @@ def _parse_args():
     parser.add_argument("--model_path", default="functiongemma-270m-it-mobile-actions-sft")
     parser.add_argument("--device", default="auto", help="auto, cpu, cuda, or cuda:0")
     parser.add_argument("--dtype", default="auto", choices=["auto", "fp32", "fp16", "bf16"])
-    parser.add_argument("--max_new_tokens", type=int, default=256)
-    parser.add_argument("--temperature", type=float, default=0.7)
+    parser.add_argument("--max_new_tokens", type=int, default=128)
+    parser.add_argument("--temperature", type=float, default=0.2)
+    parser.add_argument("--top_k", type=int, default=10, help="Top-k sampling parameter")
+    parser.add_argument("--top_p", type=float, default=0.95, help="Top-p (nucleus) sampling parameter")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--tools_path", default="default_tools.json")
     parser.add_argument("--system_prompt_path", default="default_system_prompt.txt")
@@ -235,7 +237,7 @@ def create_prompt(user_request: str, tools: List[Dict[str, Any]], system_prompt:
     }
 
 
-def test_model(model, tokenizer, processor, user_request, tools, system_prompt, max_new_tokens, temperature):
+def test_model(model, tokenizer, processor, user_request, tools, system_prompt, max_new_tokens, temperature, top_k, top_p):
     """Test the model with a user request."""
     
     print(f"\n{'='*60}")
@@ -265,6 +267,8 @@ def test_model(model, tokenizer, processor, user_request, tools, system_prompt, 
                 max_new_tokens=max_new_tokens,
                 do_sample=do_sample,
                 temperature=temperature if do_sample else None,
+                top_k=top_k if do_sample else None,
+                top_p=top_p if do_sample else None,
             )
         generated_text = tokenizer.decode(
             outputs[0][inputs["input_ids"].shape[1] :],
@@ -328,6 +332,8 @@ def main():
             system_prompt,
             max_new_tokens=args.max_new_tokens,
             temperature=args.temperature,
+            top_k=args.top_k,
+            top_p=args.top_p,
         )
         return True
 
@@ -364,6 +370,8 @@ def main():
                 max_new_tokens=args.max_new_tokens,
                 do_sample=do_sample,
                 temperature=args.temperature if do_sample else None,
+                top_k=args.top_k if do_sample else None,
+                top_p=args.top_p if do_sample else None,
             )
         generated_text = tokenizer.decode(
             outputs[0][inputs["input_ids"].shape[1] :],

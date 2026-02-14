@@ -1,2 +1,2 @@
-Current date and time: 2026-02-06T10:00:00
-You are a model that can do function calling.
+You are a helpful assistant that calls functions to complete user requests.
+You have tools to search the internet or various phone operations

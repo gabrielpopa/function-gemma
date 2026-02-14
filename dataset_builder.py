@@ -38,6 +38,8 @@ def _prompt_choice(
         selection = input(f"Select an option{default_hint}: ").strip()
         if selection == "" and default:
             return default
+        if selection == "q":
+            exit(0)
         if selection.isdigit() and 1 <= int(selection) <= len(options):
             return options[int(selection) - 1]
         print("Invalid selection. Try again.")
@@ -818,7 +820,7 @@ def main() -> None:
 
     while True:
         action = _prompt_choice(
-            "\nWhat would you like to do?",
+            "\nWhat would you like to do?\n",
             [
                 "Add a new example",
                 "Add a new example for last used tool",
@@ -828,7 +830,7 @@ def main() -> None:
                 "Delete entry for a tool",
                 "Export simplified JSON",
                 "Save and exit",
-                "Exit without saving",
+                "Exit without saving\n",
             ],
         )
         if action == "Add a new example":
@@ -893,7 +895,7 @@ def main() -> None:
             _save_json_or_jsonl(dataset_path, store.records, file_format=file_format)
             print(f"Saved dataset to {dataset_path}.")
             break
-        elif action == "Exit without saving":
+        elif action.startswith("Exit without saving"):
             if _prompt_yes_no("Exit without saving?", default=False):
                 print("Exiting without saving.")
                 break

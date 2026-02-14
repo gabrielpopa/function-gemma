@@ -44,8 +44,8 @@ class ToolStore:
         schema: Dict[str, object] = {"type": param_type}
         if description:
             schema["description"] = description
-        if param_type == "ARRAY":
-            schema["items"] = {"type": array_item_type or "STRING"}
+        if param_type == "array":
+            schema["items"] = {"type": array_item_type or "string"}
         properties[param_name] = schema
         if required:
             required_list = parameters.setdefault("required", [])
@@ -77,6 +77,7 @@ def _prompt_choice(
     options: List[str],
     default: Optional[str] = None,
     allow_back: bool = False,
+    allow_quit: bool = True,
 ) -> Optional[str]:
     print(prompt)
     if allow_back:
@@ -86,6 +87,9 @@ def _prompt_choice(
     while True:
         default_hint = f" [{default}]" if default else ""
         selection = input(f"Select an option{default_hint}: ").strip()
+        if allow_quit and selection == "q":
+            exit(0)
+            return "quit"
         if allow_back and selection == "0":
             return None
         if not selection and default:
@@ -186,7 +190,7 @@ def _print_tools(store: ToolStore) -> None:
 
 def main() -> None:
     print("FunctionGemma Tool Builder")
-    file_format = _prompt_choice("Choose output format:", ["jsonl", "json"])
+    file_format = _prompt_choice("Choose output format:", ["jsonl", "json"], default="json")
     default_path = f"tools.{file_format}"
     path = input(f"Enter path to save/load [{default_path}]: ").strip() or default_path
 
@@ -195,7 +199,7 @@ def main() -> None:
 
     while True:
         action = _prompt_choice(
-            "\nWhat would you like to do?",
+            "\nWhat would you like to do?\n",
             [
                 "Add a new tool/function",
                 "Add a parameter to an existing tool",
@@ -204,7 +208,7 @@ def main() -> None:
                 "View current tools",
                 "Export tools to another format",
                 "Save and exit",
-                "Exit without saving",
+                "Exit without saving (q)\n",
             ],
         )
 
@@ -297,7 +301,7 @@ def main() -> None:
             _save_tools(path, store.tools, file_format=file_format)
             print(f"Saved tools to {path}.")
             break
-        elif action == "Exit without saving":
+        elif action.startswith("Exit without saving"):
             print("Exiting without saving.")
             break
 
