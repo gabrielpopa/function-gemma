@@ -23,7 +23,6 @@ class ExampleSettings:
     include_all_tools: bool = True
     selected_tool_name: Optional[str] = None
     instruction_role: str = "developer"
-    use_default_developer_prompt: bool = True
     developer_prompt: Optional[str] = None
     use_json_arguments: bool = False
 
@@ -39,6 +38,8 @@ def _prompt_choice(
         selection = input(f"Select an option{default_hint}: ").strip()
         if selection == "" and default:
             return default
+        if selection == "q":
+            exit(0)
         if selection.isdigit() and 1 <= int(selection) <= len(options):
             return options[int(selection) - 1]
         print("Invalid selection. Try again.")
@@ -94,6 +95,30 @@ def _save_json_or_jsonl(path: str, records: List[Dict[str, Any]], file_format: s
         with open(path, "w", encoding="utf-8") as file:
             json.dump(records, file, ensure_ascii=False, indent=2)
             file.write("\n")
+
+
+def _build_simple_export(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    exported: List[Dict[str, Any]] = []
+    for record in records:
+        user_content = _extract_user_prompt(record)
+        tool_name = _extract_tool_name(record)
+        arguments = _extract_arguments(record)
+        exported.append(
+            {
+                "user_content": user_content,
+                "tool_name": tool_name,
+                "tool_arguments": json.dumps(arguments, ensure_ascii=False),
+            }
+        )
+    return exported
+
+
+def _save_simple_json(path: str, records: List[Dict[str, Any]]) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    exported = _build_simple_export(records)
+    with open(path, "w", encoding="utf-8") as file:
+        json.dump(exported, file, ensure_ascii=False, indent=2)
+        file.write("\n")
 
 
 def _load_tools(path: str) -> List[Dict[str, Any]]:
@@ -216,34 +241,15 @@ def _build_messages(
     selected_tool: Optional[Dict[str, Any]] = None,
     settings: Optional[ExampleSettings] = None,
     skip_developer_prompt: bool = False,
+    default_instruction_prompt: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    instruction_role = "developer"
-    if settings is not None:
-        instruction_role = settings.instruction_role
-    if not skip_developer_prompt:
-        instruction_role = _prompt_choice(
-            "Instruction role:",
-            ["developer", "system", "user"],
-            default=instruction_role,
-        )
-        if settings is not None:
-            settings.instruction_role = instruction_role
-    if skip_developer_prompt and settings is not None:
-        if settings.use_default_developer_prompt:
-            developer_prompt = _default_developer_prompt()
-        else:
-            developer_prompt = settings.developer_prompt or _prompt_non_empty("Developer prompt: ")
+    instruction_role = settings.instruction_role if settings is not None else "developer"
+    if settings is not None and settings.developer_prompt is not None:
+        developer_prompt = settings.developer_prompt
+    elif default_instruction_prompt:
+        developer_prompt = default_instruction_prompt
     else:
-        use_default = _prompt_yes_no(
-            "Use default developer prompt with current date/time?", default=True
-        )
-        if use_default:
-            developer_prompt = _default_developer_prompt()
-        else:
-            developer_prompt = _prompt_non_empty("Developer prompt: ")
-            if settings is not None:
-                settings.use_default_developer_prompt = False
-                settings.developer_prompt = developer_prompt
+        developer_prompt = _default_developer_prompt()
     tool = selected_tool
     if tool is None and settings is not None and settings.selected_tool_name:
         tool = next(
@@ -268,24 +274,36 @@ def _build_messages(
     ]
 
 
-def _create_example(tools: List[Dict[str, Any]]) -> (Dict[str, Any], ExampleSettings):
-    metadata = input("Metadata label [train]: ").strip() or "train"
-    include_all = _prompt_yes_no("Include all tools in this record?", default=True)
+def _create_example(
+    tools: List[Dict[str, Any]],
+    settings: ExampleSettings,
+    default_instruction_prompt: Optional[str],
+) -> Dict[str, Any]:
+    metadata = input(f"Metadata label [{settings.metadata or 'train'}]: ").strip() or settings.metadata or "train"
+    include_all = _prompt_yes_no(
+        "Include all tools in this record?", default=settings.include_all_tools
+    )
+    settings.metadata = metadata
+    settings.include_all_tools = include_all
     selected_tool = None
     if not include_all:
-        selected_tool = _select_tool(tools)
+        selected_tool = _select_tool(tools, default_name=settings.selected_tool_name)
     tools_to_use = tools if include_all else [selected_tool]
-    settings = ExampleSettings(
-        metadata=metadata,
-        include_all_tools=include_all,
-        selected_tool_name=selected_tool["function"]["name"] if selected_tool else None,
+    if selected_tool is not None:
+        settings.selected_tool_name = selected_tool["function"]["name"]
+    messages = _build_messages(
+        tools,
+        selected_tool=selected_tool,
+        settings=settings,
+        default_instruction_prompt=default_instruction_prompt,
     )
-    messages = _build_messages(tools, selected_tool=selected_tool, settings=settings)
-    return {"messages": messages, "tools": tools_to_use, "metadata": metadata}, settings
+    return {"messages": messages, "tools": tools_to_use, "metadata": metadata}
 
 
 def _create_example_with_settings(
-    tools: List[Dict[str, Any]], settings: ExampleSettings
+    tools: List[Dict[str, Any]],
+    settings: ExampleSettings,
+    default_instruction_prompt: Optional[str],
 ) -> Dict[str, Any]:
     selected_tool = None
     if not settings.include_all_tools and settings.selected_tool_name:
@@ -301,6 +319,7 @@ def _create_example_with_settings(
         selected_tool=selected_tool,
         settings=settings,
         skip_developer_prompt=True,
+        default_instruction_prompt=default_instruction_prompt,
     )
     return {"messages": messages, "tools": tools_to_use, "metadata": settings.metadata}
 
@@ -311,6 +330,21 @@ def _infer_format_from_path(path: str, default: str = "jsonl") -> str:
     if path.endswith(".json"):
         return "json"
     return default
+
+
+def _infer_instruction_from_records(
+    records: List[Dict[str, Any]],
+) -> (Optional[str], Optional[str]):
+    for record in reversed(records):
+        messages = record.get("messages", [])
+        if not isinstance(messages, list) or not messages:
+            continue
+        first = messages[0]
+        role = first.get("role")
+        content = first.get("content")
+        if role and isinstance(content, str):
+            return role, content
+    return None, None
 
 
 def _print_dataset_stats(records: List[Dict[str, Any]]) -> None:
@@ -479,6 +513,97 @@ def _show_dataset_for_tool(
     return tool_name, split
 
 
+def _configure_instruction_settings(
+    settings: ExampleSettings, default_instruction_prompt: Optional[str]
+) -> None:
+    settings.instruction_role = _prompt_choice(
+        "Instruction role:",
+        ["developer", "system", "user"],
+        default=settings.instruction_role,
+    )
+    current_prompt = settings.developer_prompt
+    if current_prompt is None:
+        current_prompt = default_instruction_prompt or _default_developer_prompt()
+    print("\nCurrent instruction prompt:\n")
+    print(current_prompt)
+    new_prompt = input(
+        "\nEnter new instruction prompt (leave empty to keep current, type CLEAR to reset to default): "
+    ).strip()
+    if not new_prompt:
+        return
+    if new_prompt.upper() == "CLEAR":
+        settings.developer_prompt = None
+        return
+    settings.developer_prompt = new_prompt
+
+
+def _delete_entry_for_tool(
+    records: List[Dict[str, Any]], tools: List[Dict[str, Any]], last_tool_name: Optional[str]
+) -> Optional[str]:
+    tool = _select_tool(tools, default_name=last_tool_name)
+    tool_name = tool["function"]["name"]
+    matching_indices = [
+        idx for idx, record in enumerate(records) if _extract_tool_name(record) == tool_name
+    ]
+    if not matching_indices:
+        print("No entries found for that tool.")
+        return tool_name
+    recent_indices = list(reversed(matching_indices))[:10]
+    rows = []
+    for display_idx, record_idx in enumerate(recent_indices, start=1):
+        record = records[record_idx]
+        metadata = str(record.get("metadata", ""))
+        user_prompt = _extract_user_prompt(record)
+        arguments = json.dumps(_extract_arguments(record), ensure_ascii=False)
+        rows.append([str(display_idx), metadata, user_prompt, arguments])
+
+    headers = ["#", "Split", "User Prompt", "Arguments"]
+    max_widths = [3, 8, 60, 60]
+
+    def _wrap_cell(text: str, width: int) -> List[str]:
+        if not text:
+            return [""]
+        return textwrap.wrap(text, width=width, break_long_words=True, break_on_hyphens=False) or [""]
+
+    def _print_table(rows_in: List[List[str]]) -> None:
+        col_widths = [min(len(h), max_widths[i]) for i, h in enumerate(headers)]
+        for row in rows_in:
+            for i, cell in enumerate(row):
+                col_widths[i] = max(col_widths[i], min(len(str(cell)), max_widths[i]))
+
+        def _fmt_line(values: List[str]) -> str:
+            return " | ".join(str(values[i]).ljust(col_widths[i]) for i in range(len(values)))
+
+        print(_fmt_line(headers))
+        print("-+-".join("-" * w for w in col_widths))
+        for row in rows_in:
+            wrapped_cells = [
+                _wrap_cell(str(row[i]), col_widths[i]) for i in range(len(row))
+            ]
+            max_lines = max(len(cell_lines) for cell_lines in wrapped_cells)
+            for line_idx in range(max_lines):
+                line_values = [
+                    (cell_lines[line_idx] if line_idx < len(cell_lines) else "")
+                    for cell_lines in wrapped_cells
+                ]
+                print(_fmt_line(line_values))
+
+    _print_table(rows)
+    while True:
+        selection = input("Select entry number to delete (0 to cancel): ").strip()
+        if selection == "0":
+            print("Delete cancelled.")
+            return tool_name
+        if selection.isdigit():
+            num = int(selection)
+            if 1 <= num <= len(recent_indices):
+                record_index = recent_indices[num - 1]
+                del records[record_index]
+                print("Entry deleted.")
+                return tool_name
+        print("Invalid selection. Try again.")
+
+
 def _parse_args(argv: List[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Interactive builder for FunctionGemma datasets."
@@ -512,8 +637,13 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--instruction-role",
-        default="developer",
-        help="Role for the instruction message (developer/system/user). Default: developer.",
+        default="",
+        help="Role for the instruction message (developer/system/user). Default: last used.",
+    )
+    parser.add_argument(
+        "--instruction-prompt",
+        default="",
+        help="Instruction message content. Default: last used from dataset.",
     )
     parser.add_argument(
         "--arg",
@@ -530,6 +660,14 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
         "--only-tool",
         action="store_true",
         help="Include only the selected tool (instead of all tools).",
+    )
+    parser.add_argument(
+        "--export-simple",
+        default="",
+        help=(
+            "Export a simplified JSON dataset (user_content/tool_name/tool_arguments) "
+            "to the provided path and exit. Works with or without CLI add mode."
+        ),
     )
     return parser.parse_args(argv)
 
@@ -576,7 +714,10 @@ def _validate_required_args(tool: Dict[str, Any], arguments: Dict[str, Any]) -> 
 
 
 def _build_record_from_cli(
-    tools: List[Dict[str, Any]], args: argparse.Namespace
+    tools: List[Dict[str, Any]],
+    args: argparse.Namespace,
+    default_instruction_role: Optional[str],
+    default_instruction_prompt: Optional[str],
 ) -> Dict[str, Any]:
     if not args.tool_name:
         raise ValueError("Missing --tool-name/--tool.")
@@ -592,8 +733,15 @@ def _build_record_from_cli(
     arguments = _parse_cli_tool_arguments(args)
     _validate_required_args(tool, arguments)
     tools_to_use = [tool] if args.only_tool else tools
+    instruction_role = args.instruction_role or default_instruction_role or "developer"
+    if args.instruction_prompt:
+        instruction_prompt = args.instruction_prompt
+    elif default_instruction_prompt:
+        instruction_prompt = default_instruction_prompt
+    else:
+        instruction_prompt = _default_developer_prompt()
     messages = [
-        {"role": args.instruction_role, "content": _default_developer_prompt()},
+        {"role": instruction_role, "content": instruction_prompt},
         {"role": "user", "content": args.prompt},
         {
             "role": "assistant",
@@ -611,13 +759,23 @@ def main() -> None:
     tools_path = args.tools
 
     cli_add_mode = bool(
-        args.tool_name or args.prompt or args.metadata or args.arg or args.arg_json or args.only_tool
+        args.tool_name
+        or args.prompt
+        or args.metadata
+        or args.arg
+        or args.arg_json
+        or args.only_tool
+        or args.instruction_role
+        or args.instruction_prompt
     )
     dataset_path = args.dataset
     if not cli_add_mode and "--dataset" not in sys.argv[1:]:
         dataset_path = input(f"Enter dataset path to save/load [{dataset_path}]: ").strip() or dataset_path
     file_format = _infer_format_from_path(dataset_path)
     store = DatasetStore(records=_load_json_or_jsonl(dataset_path))
+    default_instruction_role, default_instruction_prompt = _infer_instruction_from_records(
+        store.records
+    )
     tools: List[Dict[str, Any]] = []
     if tools_path:
         try:
@@ -632,53 +790,76 @@ def main() -> None:
             sys.exit(1)
     if cli_add_mode:
         try:
-            record = _build_record_from_cli(tools, args)
+            record = _build_record_from_cli(
+                tools, args, default_instruction_role, default_instruction_prompt
+            )
         except ValueError as exc:
             print(f"Error: {exc}")
             sys.exit(1)
         store.records.append(record)
         _save_json_or_jsonl(dataset_path, store.records, file_format=file_format)
         print(f"Saved dataset to {dataset_path}.")
+        if args.export_simple:
+            _save_simple_json(args.export_simple, store.records)
+            print(f"Exported simplified dataset to {args.export_simple}.")
         return
-    last_settings: Optional[ExampleSettings] = None
+    if args.export_simple:
+        _save_simple_json(args.export_simple, store.records)
+        print(f"Exported simplified dataset to {args.export_simple}.")
+        return
+    last_settings: ExampleSettings = ExampleSettings(
+        metadata="train",
+        include_all_tools=True,
+        selected_tool_name=None,
+        instruction_role=default_instruction_role or "developer",
+        developer_prompt=None,
+        use_json_arguments=False,
+    )
     last_tool_name: Optional[str] = None
     last_split: Optional[str] = None
 
     while True:
         action = _prompt_choice(
-            "\nWhat would you like to do?",
+            "\nWhat would you like to do?\n",
             [
                 "Add a new example",
                 "Add a new example for last used tool",
                 "View dataset size",
                 "Show dataset for a tool",
+                "Set instruction role/prompt",
+                "Delete entry for a tool",
+                "Export simplified JSON",
                 "Save and exit",
-                "Exit without saving",
+                "Exit without saving\n",
             ],
         )
         if action == "Add a new example":
             try:
-                record, last_settings = _create_example(tools)
-            except ValueError as exc:
-                print(exc)
-                continue
-            store.records.append(record)
-            if last_settings is not None:
-                last_tool_name = last_settings.selected_tool_name
-                last_split = last_settings.metadata
-            print("Added example.")
-        elif action == "Add a new example for last used tool":
-            if last_settings is None:
-                print("No previous example settings yet.")
-                continue
-            try:
-                record = _create_example_with_settings(tools, last_settings)
+                record = _create_example(tools, last_settings, default_instruction_prompt)
             except ValueError as exc:
                 print(exc)
                 continue
             store.records.append(record)
             last_tool_name = last_settings.selected_tool_name
             last_split = last_settings.metadata
+            default_instruction_role, default_instruction_prompt = _infer_instruction_from_records(
+                store.records
+            )
+            print("Added example.")
+        elif action == "Add a new example for last used tool":
+            try:
+                record = _create_example_with_settings(
+                    tools, last_settings, default_instruction_prompt
+                )
+            except ValueError as exc:
+                print(exc)
+                continue
+            store.records.append(record)
+            last_tool_name = last_settings.selected_tool_name
+            last_split = last_settings.metadata
+            default_instruction_role, default_instruction_prompt = _infer_instruction_from_records(
+                store.records
+            )
             print("Added example.")
         elif action == "View dataset size":
             _print_dataset_stats(store.records)
@@ -691,12 +872,31 @@ def main() -> None:
                 last_split = split
             except ValueError as exc:
                 print(exc)
+        elif action == "Set instruction role/prompt":
+            _configure_instruction_settings(last_settings, default_instruction_prompt)
+        elif action == "Delete entry for a tool":
+            try:
+                last_tool_name = _delete_entry_for_tool(
+                    store.records, tools, last_tool_name
+                )
+                default_instruction_role, default_instruction_prompt = _infer_instruction_from_records(
+                    store.records
+                )
+            except ValueError as exc:
+                print(exc)
+        elif action == "Export simplified JSON":
+            default_export_path = "dataset.json"
+            export_path = input(
+                f"Enter export path [{default_export_path}]: "
+            ).strip() or default_export_path
+            _save_simple_json(export_path, store.records)
+            print(f"Exported simplified dataset to {export_path}.")
         elif action == "Save and exit":
             _save_json_or_jsonl(dataset_path, store.records, file_format=file_format)
             print(f"Saved dataset to {dataset_path}.")
             break
-        elif action == "Exit without saving":
-            if _prompt_yes_no("Exit without saving?"):
+        elif action.startswith("Exit without saving"):
+            if _prompt_yes_no("Exit without saving?", default=False):
                 print("Exiting without saving.")
                 break
 
